@@ -19,7 +19,7 @@ Abre `http://localhost:8000`.
 | Mover | WASD / flechas | Stick izquierdo |
 | Sprint | Shift | RB / RT |
 | Pase raso · entrada (sin balón) | J | A |
-| Tiro (mantén para cargar; W/S apunta al palo) · plancha (sin balón) | K / Espacio | B |
+| Tiro (mantén para cargar; W/S apunta al palo) · plancha (sin balón) | K / R / Espacio | B |
 | Pase elevado, centro, pase al hueco | L | X |
 | Cambiar de jugador | Q | LB |
 | Cámara (TV, cercana, táctica) | V | Y |

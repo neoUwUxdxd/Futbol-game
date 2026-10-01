@@ -2,7 +2,7 @@
 
 const KEYMAP = {
   pass: ['KeyJ', 'KeyX'],
-  shoot: ['KeyK', 'Space'],
+  shoot: ['KeyK', 'KeyR', 'Space'],
   lob: ['KeyL', 'KeyC'],
   switch: ['KeyQ', 'KeyU'],
   sprint: ['ShiftLeft', 'ShiftRight'],

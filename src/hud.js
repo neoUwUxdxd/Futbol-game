@@ -88,7 +88,7 @@ export class Hud {
     if (document.body.classList.contains('touch')) {
       text = text.replace('Pulsa J (o A) para sacar', 'Pulsa PASE para sacar')
         .replace('J saque corto · L saque largo', 'PASE saque corto · CENTRO saque largo')
-        .replace('L centro al área · J pase corto · K disparo', 'CENTRO al área · PASE corto · TIRO');
+        .replace('L centro al área · J pase corto · K/R disparo', 'CENTRO al área · PASE corto · TIRO');
     }
     this.el.hint.textContent = text;
     this.el.hint.classList.toggle('show', !!text);

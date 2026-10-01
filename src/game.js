@@ -1512,7 +1512,7 @@ export class Game {
         this.owner = p;
         if (r.kind === 'throw') { p.holding = true; p.setAction('throw', 99, 1, 0); }
         if (r.kind === 'goalkick') b.reset(r.spot.x, r.spot.z);
-        if (p.team.i === 0 && !p.isGK) this.hud.hint(r.kind === 'throw' ? 'J saque corto · L saque largo' : r.kind === 'corner' ? 'L centro al área · J pase corto · K disparo' : '');
+        if (p.team.i === 0 && !p.isGK) this.hud.hint(r.kind === 'throw' ? 'J saque corto · L saque largo' : r.kind === 'corner' ? 'L centro al área · J pase corto · K/R disparo' : '');
       }
       return;
     }
