@@ -211,26 +211,52 @@ export class Game {
   // Roles tácticos: quién presiona, quién cubre, quién va al balón
   // =========================================================================
   assignRoles() {
-    for (const p of this.players) p.intercept = this.computeIntercept(p);
+    for (const p of this.players) { p.intercept = this.computeIntercept(p); p.mark = null; }
     for (const t of this.teams) {
-      t.chaser = t.presser = t.cover = null;
+      t.chaser = t.presser = t.cover = t.support = null;
       const hasBall = this.owner && this.owner.team === t;
       if (hasBall) continue;
       const out = t.players.filter((p) => !p.isGK && p.anim.action !== 'fall');
+      // el jugador que maneja el usuario no cuenta para los roles de la IA:
+      // si el usuario no va al balón, un compañero tiene que ir igualmente
+      const human = this.demo ? null : (t === this.human.team ? this.human : null);
+      const ai = out.filter((p) => p !== human);
       if (!this.owner) {
         let best = null;
-        for (const p of out) if (!best || p.intercept.t < best.intercept.t) best = p;
-        t.chaser = best;
+        for (const p of ai) if (!best || p.intercept.t < best.intercept.t) best = p;
         if (!best) continue;
+        t.chaser = best;
+        if (human && human.intercept.t + 0.45 < best.intercept.t) {
+          // el usuario llega antes: el compañero acompaña la jugada por detrás
+          t.chaser = null;
+          t.support = best;
+        }
         // el portero sale si el balón suelto llega a su área
         const gk = t.gk;
         const ix = gk.intercept;
-        if (Math.abs(ix.x) > HALF_L - PITCH.boxD + 1 && Math.sign(ix.x) === -t.side && Math.abs(ix.z) < PITCH.boxW / 2 - 2 && ix.t < best.intercept.t - 0.2) t.chaser = gk;
+        const fastest = human && human.intercept.t < best.intercept.t ? human : best;
+        if (Math.abs(ix.x) > HALF_L - PITCH.boxD + 1 && Math.sign(ix.x) === -t.side && Math.abs(ix.z) < PITCH.boxW / 2 - 2 && ix.t < fastest.intercept.t - 0.2) { t.chaser = gk; t.support = null; }
       } else if (!this.owner.holding) {
         const o = this.owner.pos;
-        const sorted = out.slice().sort((a, b) => hdist(a.pos, o) - hdist(b.pos, o));
-        t.presser = sorted[0];
-        t.cover = sorted[1];
+        const sorted = ai.slice().sort((a, b) => hdist(a.pos, o) - hdist(b.pos, o));
+        const humanOn = human && hdist(human.pos, o) < 3.2;
+        if (humanOn) { t.cover = sorted[0]; }
+        else { t.presser = sorted[0]; t.cover = sorted[1]; }
+        // marcaje: cada atacante peligroso con un defensor distinto
+        const free = ai.filter((p) => p !== t.presser && p !== t.cover && p.role !== 'FWD');
+        const ownGoal = V(-t.side * HALF_L, 0, 0);
+        const threats = this.opponents(t)
+          .filter((q) => !q.isGK && q !== this.owner)
+          .sort((a, b) => hdist(a.pos, ownGoal) - hdist(b.pos, ownGoal));
+        for (const q of threats) {
+          let bd = 18, who = null;
+          for (const d of free) {
+            const home = this.formationTarget(d, V());
+            const dd = hdist(d.pos, q.pos) * 0.6 + hdist(home, q.pos) * 0.4;
+            if (dd < bd) { bd = dd; who = d; }
+          }
+          if (who) { who.mark = q; free.splice(free.indexOf(who), 1); }
+        }
       }
     }
   }
@@ -393,15 +419,7 @@ export class Game {
     if (p.role === 'MID') x = clamp(x, -HALF_L + 9, HALF_L - 11);
     if (p.role === 'FWD') x = clamp(x, -HALF_L * 0.15, HALF_L - 7);
     if (opp && p.role !== 'FWD') x = Math.min(x, bx - 1.5);
-    if (own && p.role !== 'DEF') {
-      p.supportT -= 1 / 60;
-      if (p.supportT <= 0) {
-        p.supportT = rnd(1.5, 3);
-        p.supportOff.set(rnd(0, p.role === 'FWD' ? 7 : 4), 0, rnd(-5, 5));
-      }
-      x += p.supportOff.x; z += p.supportOff.z;
-      x = Math.min(x, HALF_L - 5);
-    }
+    if (own && p.role === 'FWD') x = Math.min(x + 3, HALF_L - 5);
     z = clamp(z, -HALF_W + 2, HALF_W - 2);
     out.set(x * s, 0, z);
     return out;
@@ -443,6 +461,13 @@ export class Game {
       this.seek(p, V(ix.x, 0, ix.z), 4, 0.1, 0.5);
       return;
     }
+    if (!this.owner && t.support === p) {
+      // acompañar: cerca del punto de corte, cubriendo por detrás
+      const ix = p.intercept;
+      const back = V(-t.side, 0, -Math.sign(ix.z) * 0.3).normalize();
+      this.seek(p, V(ix.x, 0, ix.z).addScaledVector(back, 3.5), 5, 0.5);
+      return;
+    }
     if (oppHas && t.presser === p && !this.owner.holding) {
       const o = this.owner;
       const ownGoal = V(-t.side * HALF_L, 0, 0);
@@ -472,32 +497,81 @@ export class Game {
       this.faceBall(p);
       return;
     }
-    if (oppHas) {
-      // marcaje zonal: encimar al atacante más cercano a la zona
-      let mark = null, md = 10;
-      for (const o of this.opponents(t)) {
-        if (o.isGK || o === this.owner) continue;
-        const d = hdist(o.pos, target);
-        if (d < md) { md = d; mark = o; }
-      }
-      if (mark) {
-        const ownGoal = V(-t.side * HALF_L, 0, 0);
-        const gs = V().subVectors(ownGoal, mark.pos).setY(0).normalize();
-        const mp = mark.pos.clone().addScaledVector(gs, 1.6);
-        target.lerp(mp, 0.6);
-      }
+    if (oppHas && p.mark) {
+      // marcaje al hombre asignado: entre el atacante y la portería, del lado del balón
+      const m = p.mark;
+      const ownGoal = V(-t.side * HALF_L, 0, 0);
+      const gs = V().subVectors(ownGoal, m.pos).setY(0).normalize();
+      const tb = V().subVectors(b, m.pos).setY(0);
+      const dB = tb.length();
+      tb.normalize();
+      const tight = clamp(1 - (dB - 8) / 20, 0.45, 1); // más pegado cuanto más cerca está del balón
+      const mp = m.pos.clone().addScaledVector(gs, 1.5).addScaledVector(tb, 0.9).addScaledVector(m.vel, 0.3);
+      target.lerp(mp, tight);
+      this.seek(p, target, 5, 0.3, 1.2);
+      if (p.desired.lengthSq() < 0.5) this.faceBall(p);
+      return;
     }
     if (own && this.owner) {
-      // desmarque: alejarse del rival más cercano y del compañero con balón
-      const n = this.nearestOpp(target, t);
-      if (n.d < 3.5) target.add(V().subVectors(target, n.p.pos).setY(0).normalize().multiplyScalar(3.5 - n.d));
-      const dc = hdist(target, this.owner.pos);
-      if (dc < 7) target.add(V().subVectors(target, this.owner.pos).setY(0).normalize().multiplyScalar((7 - dc) * 0.7));
-      target.x = clamp(target.x, -HALF_L + 2, HALF_L - 2);
-      target.z = clamp(target.z, -HALF_W + 1.5, HALF_W - 1.5);
+      target.copy(this.supportSpot(p, target, dt));
+      this.seek(p, target, 6, 0.5, 1.8);
+      if (p.desired.lengthSq() < 0.5) this.faceBall(p);
+      return;
     }
     this.seek(p, target, 9, 0.6, 2.2);
     if (p.desired.lengthSq() < 0.5) this.faceBall(p);
+  }
+
+  /**
+   * Busca un hueco para recibir: abierto, con línea de pase limpia desde el
+   * poseedor, a distancia útil, separado de los compañeros y, si se puede,
+   * a la espalda de la defensa para un pase al hueco.
+   */
+  supportSpot(p, base, dt) {
+    p.supportT -= dt;
+    if (p.supportT > 0 && p.supportSpot && p.supportOwner === this.owner) return p.supportSpot;
+    p.supportT = rnd(0.4, 0.6);
+    p.supportOwner = this.owner;
+    const t = p.team;
+    const s = t.side;
+    const c = this.owner;
+    const press = this.nearestOpp(c.pos, t).d;
+    let lastDef = -HALF_L;
+    for (const o of this.opponents(t)) if (!o.isGK) lastDef = Math.max(lastDef, o.pos.x * s);
+    const fwdW = { DEF: 0.1, MID: 0.45, FWD: 0.7 }[p.role];
+    const xs = p.role === 'DEF' ? [-6, -3, 0, 3] : p.role === 'FWD' ? [-4, 0, 4, 8, 12] : [-5, -2, 1, 4, 7];
+    let best = null, bs = -1e9;
+    const spot = V();
+    for (const dx of xs) {
+      for (const dz of [-9, -4.5, 0, 4.5, 9]) {
+        spot.set(clamp(base.x + dx * s, -HALF_L + 3, HALF_L - 3), 0, clamp(base.z + dz, -HALF_W + 2, HALF_W - 2));
+        const open = Math.min(this.nearestOpp(spot, t).d, 7) / 7;
+        const lane = 1 - this.laneRisk(c.pos, spot, t);
+        const d = hdist(c.pos, spot);
+        let sc = open * 1.0 + lane * 1.3;
+        if (d < 7) sc -= (7 - d) / 7 * 0.9;
+        if (d > 28) sc -= (d - 28) / 10;
+        const prog = (spot.x - c.pos.x) * s;
+        sc += prog / 20 * fwdW;
+        // a la espalda de la defensa: pase al hueco si el poseedor tiene tiempo
+        const ax = spot.x * s;
+        if (p.role !== 'DEF' && ax > lastDef + 1 && ax < HALF_L - 4 && press > 3) sc += 0.35;
+        // los defensas no se descuelgan por delante del balón
+        if (p.role === 'DEF' && ax > c.pos.x * s + 2) sc -= 0.8;
+        // separación con los compañeros
+        for (const q of t.players) {
+          if (q === p || q === c || q.isGK) continue;
+          const qp = q.supportSpot && q.supportOwner === c ? q.supportSpot : q.pos;
+          const dq = hdist(qp, spot);
+          if (dq < 7) sc -= (7 - dq) / 7 * 0.9;
+        }
+        sc -= hdist(p.pos, spot) / 25 * 0.5;
+        sc -= hdist(base, spot) / 14 * 0.35;
+        if (sc > bs) { bs = sc; best = spot.clone(); }
+      }
+    }
+    p.supportSpot = best;
+    return best;
   }
 
   faceBall(p) {
